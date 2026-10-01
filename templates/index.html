@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Geolocalización — IP vs navegador</title>
+  <style>
+    :root {
+      font-family: system-ui, sans-serif;
+      line-height: 1.5;
+      color: #1a1a1a;
+      background: #f4f4f5;
+    }
+    body { max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.35rem; }
+    section {
+      background: #fff;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    }
+    button {
+      cursor: pointer;
+      padding: .5rem 1rem;
+      font-size: 1rem;
+      border-radius: 6px;
+      border: 0;
+      background: #2563eb;
+      color: #fff;
+    }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    .muted { color: #52525b; font-size: .9rem; }
+    pre {
+      background: #18181b;
+      color: #e4e4e7;
+      padding: .75rem 1rem;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: .8rem;
+    }
+    a { color: #2563eb; }
+    .ok { color: #15803d; }
+    .err { color: #b91c1c; }
+  </style>
+</head>
+<body>
+  <h1>Comparar ubicación por IP y por navegador</h1>
+  <p class="muted">
+    La IP indica la zona del proveedor. El botón inferior pide permiso al navegador
+    y puede usar GPS / red para una posición mucho más precisa (solo con tu consentimiento en el diálogo del sistema).
+  </p>
+
+  <section>
+    <h2>Metadatos por IP</h2>
+    <p id="ip-status" class="muted">Cargando…</p>
+    <pre id="ip-json" hidden></pre>
+  </section>
+
+  <section>
+    <h2>Ubicación del navegador</h2>
+    <p>
+      <button type="button" id="btn-geo">Obtener posición precisa</button>
+    </p>
+    <p id="geo-status" class="muted"></p>
+    <pre id="geo-json" hidden></pre>
+    <p id="map-link" class="muted" hidden></p>
+  </section>
+
+  <script>
+    const ipStatus = document.getElementById('ip-status');
+    const ipJson = document.getElementById('ip-json');
+    const geoStatus = document.getElementById('geo-status');
+    const geoJson = document.getElementById('geo-json');
+    const mapLink = document.getElementById('map-link');
+    const btnGeo = document.getElementById('btn-geo');
+
+    async function loadIp() {
+      try {
+        const r = await fetch('/api/ip');
+        const data = await r.json();
+        if (data.ok) {
+          ipStatus.innerHTML = '<span class="ok">Datos recibidos.</span> Ciudad (IP): ' +
+            (data.city || '—') + ' · País: ' + (data.country || '—');
+        } else {
+          ipStatus.innerHTML = '<span class="err">Error:</span> ' + (data.error || 'desconocido');
+        }
+        ipJson.hidden = false;
+        ipJson.textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        ipStatus.innerHTML = '<span class="err">No se pudo contactar con el servidor.</span>';
+      }
+    }
+
+    btnGeo.addEventListener('click', () => {
+      geoStatus.textContent = '';
+      geoJson.hidden = true;
+      mapLink.hidden = true;
+      if (!navigator.geolocation) {
+        geoStatus.innerHTML = '<span class="err">Este navegador no expone Geolocation API.</span>';
+        return;
+      }
+      btnGeo.disabled = true;
+      geoStatus.textContent = 'Esperando permiso y señal…';
+
+      navigator.geolocation.getCurrentPosition(
+        async (pos) => {
+          const body = {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+            altitude: pos.coords.altitude,
+            heading: pos.coords.heading,
+            speed: pos.coords.speed,
+          };
+          try {
+            const r = await fetch('/api/browser-location', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            const data = await r.json();
+            geoJson.hidden = false;
+            geoJson.textContent = JSON.stringify({ coords: body, server: data }, null, 2);
+            if (data.ok) {
+              geoStatus.innerHTML = '<span class="ok">Enviado al servidor.</span> Precisión aprox.: '
+                + (body.accuracy != null ? Math.round(body.accuracy) + ' m' : '—');
+              const lat = body.latitude;
+              const lon = body.longitude;
+              mapLink.hidden = false;
+              mapLink.innerHTML = '<a href="https://www.openstreetmap.org/?mlat=' + lat +
+                '&mlon=' + lon + '&zoom=16" target="_blank" rel="noopener">Abrir en OpenStreetMap</a>';
+            } else {
+              geoStatus.innerHTML = '<span class="err">Respuesta:</span> ' + (data.error || '');
+            }
+          } catch (e) {
+            geoStatus.innerHTML = '<span class="err">Error de red al enviar al servidor.</span>';
+          }
+          btnGeo.disabled = false;
+        },
+        (err) => {
+          geoStatus.innerHTML = '<span class="err">Geolocalización:</span> ' + err.message;
+          btnGeo.disabled = false;
+        },
+        { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+      );
+    });
+
+    loadIp();
+  </script>
+</body>
+</html>
